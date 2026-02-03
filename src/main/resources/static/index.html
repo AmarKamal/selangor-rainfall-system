@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Selangor Rainfall Monitoring System</title>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --secondary: #34495e;
+            --accent: #3498db;
+            --success: #27ae60;
+            --danger: #e74c3c;
+            --light: #ecf0f1;
+        }
+
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: var(--light); 
+            color: var(--primary);
+        }
+
+        .container { 
+            max-width: 1100px; 
+            margin: auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 15px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1); 
+        }
+
+        h2 { border-bottom: 3px solid var(--accent); padding-bottom: 10px; margin-top: 0; }
+
+        .control-panel {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .date-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: bold;
+        }
+
+        input[type="date"] {
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+        }
+
+        .button-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .btn { 
+            padding: 10px 18px; 
+            border: none; 
+            cursor: pointer; 
+            border-radius: 6px; 
+            font-weight: 600; 
+            transition: all 0.2s; 
+            font-size: 0.9rem;
+        }
+
+        .btn-all { background: var(--danger); color: white; width: 100%; margin-bottom: 10px; font-size: 1rem; }
+        .btn-all:hover { background: #c0392b; transform: translateY(-2px); }
+
+        .btn-dist { background: var(--accent); color: white; }
+        .btn-dist:hover { background: #2980b9; transform: translateY(-2px); }
+
+        #status-bar { 
+            padding: 12px; 
+            margin-bottom: 20px; 
+            border-radius: 6px; 
+            display: none; 
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .loading { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        .finish { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; overflow: hidden; border-radius: 8px; }
+        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: var(--primary); color: white; text-transform: uppercase; font-size: 0.85rem; }
+        tr:hover { background: #f1f1f1; }
+        
+        .val-bold { font-weight: bold; color: var(--accent); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🌧️ Selangor Rainfall Dashboard</h2>
+    
+    <div class="control-panel">
+        <div class="date-section">
+            <label>Pilih Tarikh Semakan:</label>
+            <input type="date" id="targetDate">
+            <small>(Kosongkan untuk hari ini)</small>
+        </div>
+
+        <button class="btn btn-all" onclick="syncAllDistricts()">🚀 SYNC ALL DISTRICTS (SELANGOR)</button>
+        
+        <div class="button-group">
+            <button class="btn btn-dist" onclick="fetchRain('Shah Alam', 3.0738, 101.5183)">Shah Alam</button>
+            <button class="btn btn-dist" onclick="fetchRain('Klang', 3.0449, 101.4451)">Klang</button>
+            <button class="btn btn-dist" onclick="fetchRain('Petaling', 3.1074, 101.6067)">Petaling</button>
+            <button class="btn btn-dist" onclick="fetchRain('Gombak', 3.2424, 101.7018)">Gombak</button>
+            <button class="btn btn-dist" onclick="fetchRain('Sepang', 2.8169, 101.7539)">Sepang</button>
+            <button class="btn btn-dist" onclick="fetchRain('Hulu Langat', 2.9936, 101.7892)">Hulu Langat</button>
+        </div>
+    </div>
+
+    <div id="status-bar"></div>
+
+    <table id="resultTable">
+        <thead>
+            <tr>
+                <th>Daerah</th>
+                <th>Tarikh Rekod</th>
+                <th>1-Hari (Hujan)</th>
+                <th>3-Hari (Rolling)</th>
+                <th>30-Hari (Rolling)</th>
+            </tr>
+        </thead>
+        <tbody id="tableBody">
+            </tbody>
+    </table>
+</div>
+
+<script>
+    // Tetapkan tarikh hari ini sebagai default pada input
+    document.getElementById('targetDate').valueAsDate = new Date();
+
+    const districts = [
+        { name: "Petaling", lat: 3.1074, lon: 101.6067 },
+        { name: "Klang", lat: 3.0449, lon: 101.4451 },
+        { name: "Gombak", lat: 3.2424, lon: 101.7018 },
+        { name: "Hulu Langat", lat: 2.9936, lon: 101.7892 },
+        { name: "Sepang", lat: 2.8169, lon: 101.7539 },
+        { name: "Kuala Langat", lat: 2.8025, lon: 101.4930 },
+        { name: "Kuala Selangor", lat: 3.3500, lon: 101.2500 },
+        { name: "Hulu Selangor", lat: 3.5161, lon: 101.6525 },
+        { name: "Sabak Bernam", lat: 3.7667, lon: 101.0000 }
+    ];
+
+    async function syncAllDistricts() {
+        const statusBar = document.getElementById('status-bar');
+        const tbody = document.getElementById('tableBody');
+        
+        statusBar.className = 'loading';
+        statusBar.style.display = 'block';
+        tbody.innerHTML = ''; // Reset table
+
+        for (const d of districts) {
+            statusBar.innerText = `🔄 Sedang memproses: ${d.name}...`;
+            await fetchRain(d.name, d.lat, d.lon, true);
+        }
+
+        statusBar.className = 'finish';
+        statusBar.innerText = "✅ Semua daerah berjaya dikemas kini!";
+        setTimeout(() => { statusBar.style.display = 'none'; }, 5000);
+    }
+
+    async function fetchRain(loc, lat, lon, isBulk = false) {
+        const date = document.getElementById('targetDate').value;
+        const statusBar = document.getElementById('status-bar');
+
+        if(!isBulk) {
+            statusBar.className = 'loading';
+            statusBar.style.display = 'block';
+            statusBar.innerText = `🔄 Menarik data untuk ${loc}...`;
+        }
+
+        try {
+            const response = await fetch(`/api/rain/sync?loc=${loc}&lat=${lat}&lon=${lon}&date=${date}`);
+            const data = await response.json();
+            
+            const tbody = document.getElementById('tableBody');
+            const row = `<tr>
+                <td><strong>${data.location}</strong></td>
+                <td>${data.date}</td>
+                <td class="val-bold">${data.daily}</td>
+                <td>${data.rolling3}</td>
+                <td>${data.rolling30}</td>
+            </tr>`;
+            
+            if(isBulk) {
+                tbody.innerHTML += row;
+            } else {
+                tbody.innerHTML = row + tbody.innerHTML;
+                statusBar.className = 'finish';
+                statusBar.innerText = `✅ Data ${loc} sedia.`;
+                setTimeout(() => { statusBar.style.display = 'none'; }, 2000);
+            }
+        } catch (error) {
+            console.error("Error:", error);
+            if(!isBulk) alert("Gagal menghubungi server!");
+        }
+    }
+</script>
+
+</body>
+</html>
