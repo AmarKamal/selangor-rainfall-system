@@ -181,7 +181,8 @@
         }
 
         try {
-            const response = await fetch(`/api/rain/sync?loc=${loc}&lat=${lat}&lon=${lon}&date=${date}`);
+            //const response = await fetch(`/api/rain/sync?loc=${loc}&lat=${lat}&lon=${lon}&date=${date}`);
+            const response = await fetch(`/api/rain/live?loc=${loc}&lat=${lat}&lon=${lon}&date=${date}`);
             const data = await response.json();
             
             const tbody = document.getElementById('tableBody');

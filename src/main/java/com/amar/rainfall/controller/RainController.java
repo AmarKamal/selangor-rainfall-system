@@ -26,8 +26,7 @@ public class RainController {
     private final RestTemplate restTemplate = new RestTemplate();
 
     /**
-     * Endpoint untuk sync data dari API dan paparkan hasil rolling.
-     * Contoh: /api/rain/sync?loc=Klang&lat=3.04&lon=101.44&date=2026-02-01
+     * VERSI DATABASE: Simpan ke DB dan kira dari DB.
      */
     @GetMapping("/sync")
     public RainSummaryDTO syncAndShow(
@@ -35,79 +34,97 @@ public class RainController {
             @RequestParam double lat,
             @RequestParam double lon,
             @RequestParam(required = false) String date) {
-    	
-    	LocalDate targetDate;
-        try {
-            // Jika date dari frontend "null" atau "", gunakan hari ini
-            if (date == null || date.trim().isEmpty() || date.equals("undefined")) {
-                targetDate = LocalDate.now();
-            } else {
-                targetDate = LocalDate.parse(date);
-            }
-        } catch (Exception e) {
-            targetDate = LocalDate.now(); // Fallback jika format tarikh pelik
-        }
+        
+        LocalDate targetDate = parseDate(date);
+        fetchAndSaveToDb(loc, lat, lon);
 
-        // 1. Tentukan tarikh sasaran (Guna hari ini jika tiada input)
-         targetDate = (date != null && !date.isEmpty()) 
-                               ? LocalDate.parse(date) 
-                               : LocalDate.now();
-
-        // 2. Bina URL API Open-Meteo
-        // Kita tarik 31 hari ke belakang dari tarikh sasaran untuk pastikan data cukup
-        String url = UriComponentsBuilder.fromHttpUrl("https://api.open-meteo.com/v1/forecast")
-                .queryParam("latitude", lat)
-                .queryParam("longitude", lon)
-                .queryParam("daily", "precipitation_sum")
-                .queryParam("past_days", 31) 
-                .queryParam("timezone", "Asia/Kuala_Lumpur")
-                .toUriString();
-
-        // 3. Panggil API dan dapatkan respons
-        try {
-            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
-            if (response != null && response.containsKey("daily")) {
-                Map<String, Object> daily = (Map<String, Object>) response.get("daily");
-                List<String> dates = (List<String>) daily.get("time");
-                List<Object> rains = (List<Object>) daily.get("precipitation_sum");
-
-                // 4. Simpan ke Database (Check Duplicate)
-                for (int i = 0; i < dates.size(); i++) {
-                    LocalDate d = LocalDate.parse(dates.get(i));
-                    // Handle casting dari Number (Double/Integer) ke Double
-                    Double r = (rains.get(i) != null) ? Double.valueOf(rains.get(i).toString()) : 0.0;
-
-                    if (!repository.existsByLocationNameAndRecordDate(loc, d)) {
-                        RainData data = new RainData();
-                        data.setLocationName(loc);
-                        data.setRecordDate(d);
-                        data.setPrecipitation(r);
-                        repository.save(data);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("API Error: " + e.getMessage());
-            // Kita teruskan ke pengiraan walaupun API gagal, mungkin data dah ada dalam DB
-        }
-
-        // 5. Pengiraan Rolling menggunakan Helper Method
         return new RainSummaryDTO(
                 loc,
                 targetDate,
-                getSum(loc, targetDate, targetDate) + " mm",
-                getSum(loc, targetDate.minusDays(2), targetDate) + " mm",
-                getSum(loc, targetDate.minusDays(29), targetDate) + " mm"
+                getSumFromDb(loc, targetDate, targetDate) + " mm",
+                getSumFromDb(loc, targetDate.minusDays(2), targetDate) + " mm",
+                getSumFromDb(loc, targetDate.minusDays(29), targetDate) + " mm"
         );
     }
 
     /**
-     * Helper method untuk mengira jumlah hujan dalam julat tarikh dari database.
+     * VERSI NO-DB (LIVE): Terus kira dari API response tanpa simpan ke MySQL.
      */
-    private double getSum(String loc, LocalDate start, LocalDate end) {
-        List<RainData> dataList = repository.findAllByLocationNameAndRecordDateBetween(loc, start, end);
-        return dataList.stream()
-                .mapToDouble(RainData::getPrecipitation)
-                .sum();
+    @GetMapping("/live")
+    public RainSummaryDTO livePreview(
+            @RequestParam String loc,
+            @RequestParam double lat,
+            @RequestParam double lon,
+            @RequestParam(required = false) String date) {
+        
+        LocalDate targetDate = parseDate(date);
+        String url = buildUrl(lat, lon);
+        
+        try {
+            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
+            Map<String, Object> daily = (Map<String, Object>) response.get("daily");
+            List<String> dates = (List<String>) daily.get("time");
+            List<Object> rains = (List<Object>) daily.get("precipitation_sum");
+
+            double sum1 = 0, sum3 = 0, sum30 = 0;
+
+            for (int i = 0; i < dates.size(); i++) {
+                LocalDate d = LocalDate.parse(dates.get(i));
+                double r = Double.parseDouble(rains.get(i).toString());
+
+                // Logik matematik rolling dalam memori
+                if (d.isEqual(targetDate)) sum1 = r;
+                if (!d.isAfter(targetDate) && d.isAfter(targetDate.minusDays(3))) sum3 += r;
+                if (!d.isAfter(targetDate) && d.isAfter(targetDate.minusDays(30))) sum30 += r;
+            }
+
+            return new RainSummaryDTO(loc, targetDate, sum1 + " mm", 
+                                      String.format("%.2f mm", sum3), 
+                                      String.format("%.2f mm", sum30));
+        } catch (Exception e) {
+            return new RainSummaryDTO(loc, targetDate, "Error API", "0 mm", "0 mm");
+        }
+    }
+
+    // --- HELPER METHODS ---
+
+    private LocalDate parseDate(String date) {
+        if (date == null || date.trim().isEmpty() || date.equals("undefined")) {
+            return LocalDate.now();
+        }
+        return LocalDate.parse(date);
+    }
+
+    private String buildUrl(double lat, double lon) {
+        return UriComponentsBuilder.fromHttpUrl("https://api.open-meteo.com/v1/forecast")
+                .queryParam("latitude", lat)
+                .queryParam("longitude", lon)
+                .queryParam("daily", "precipitation_sum")
+                .queryParam("past_days", 31)
+                .queryParam("timezone", "Asia/Kuala_Lumpur")
+                .toUriString();
+    }
+
+    private void fetchAndSaveToDb(String loc, double lat, double lon) {
+        try {
+            Map<String, Object> response = restTemplate.getForObject(buildUrl(lat, lon), Map.class);
+            Map<String, Object> daily = (Map<String, Object>) response.get("daily");
+            List<String> dates = (List<String>) daily.get("time");
+            List<Object> rains = (List<Object>) daily.get("precipitation_sum");
+
+            for (int i = 0; i < dates.size(); i++) {
+                LocalDate d = LocalDate.parse(dates.get(i));
+                Double r = Double.valueOf(rains.get(i).toString());
+                if (!repository.existsByLocationNameAndRecordDate(loc, d)) {
+                    RainData data = new RainData(loc, d, r);
+                    repository.save(data);
+                }
+            }
+        } catch (Exception e) { System.err.println("DB Sync Error: " + e.getMessage()); }
+    }
+
+    private double getSumFromDb(String loc, LocalDate start, LocalDate end) {
+        return repository.findAllByLocationNameAndRecordDateBetween(loc, start, end)
+                .stream().mapToDouble(RainData::getPrecipitation).sum();
     }
 }

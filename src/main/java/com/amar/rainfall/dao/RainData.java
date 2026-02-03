@@ -19,6 +19,13 @@ public class RainData {
     private LocalDate recordDate;
 
     private Double precipitation;
+    
+ // 2. Custom Constructor (Untuk mudahkan urusan di Controller)
+    public RainData(String locationName, LocalDate recordDate, Double precipitation) {
+        this.locationName = locationName;
+        this.recordDate = recordDate;
+        this.precipitation = precipitation;
+    }
 
     // Getters and Setters
     public Long getId() { return id; }
